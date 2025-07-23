@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TruthGuard - AI Fact Checker</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            <div class="header-content">
+                <h1 class="chat-title">🛡️ TruthGuard</h1>
+                <p class="chat-subtitle">AI-Powered Fact Checker & Misinformation Detector</p>
+                <div class="status-indicator">
+                    <div class="status-dot"></div>
+                    <span>Online & Ready</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="chat-messages" id="chatMessages">
+            <div class="welcome-message">
+                <p>👋 Welcome to TruthGuard! Send me any news, claim, or statement and I'll analyze it for accuracy and potential misinformation.</p>
+            </div>
+        </div>
+
+        <div class="chat-input-container">
+            <div class="input-wrapper">
+                <textarea 
+                    class="chat-input" 
+                    id="chatInput" 
+                    placeholder="Paste a news article, claim, or statement to fact-check..."
+                    rows="1"
+                ></textarea>
+                <button class="send-button" id="sendButton">
+                    ➤
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
