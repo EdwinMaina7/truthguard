@@ -1,46 +1,84 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TruthGuard - AI Fact Checker</title>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>TruthGuard – AI-Powered Fake News Detection</title>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+  <link href="styles.css" rel="stylesheet" />
 </head>
 <body>
-    <div class="chat-container">
-        <div class="chat-header">
-            <div class="header-content">
-                <h1 class="chat-title">🛡️ TruthGuard</h1>
-                <p class="chat-subtitle">AI-Powered Fact Checker & Misinformation Detector</p>
-                <div class="status-indicator">
-                    <div class="status-dot"></div>
-                    <span id="statusText">Online & Ready</span>
-                </div>
-            </div>
-            <div class="connection-status" id="connectionStatus">Checking...</div>
+  <div class="background-elements">
+    <div class="floating-shape shape-1"></div>
+    <div class="floating-shape shape-2"></div>
+    <div class="floating-shape shape-3"></div>
+  </div>
+
+  <div class="container">
+    <header class="hero-section">
+      <div class="logo-container">
+        <i class="fas fa-shield-alt logo-icon"></i>
+        <h1>TruthGuard</h1>
+      </div>
+      <p class="subtitle">Detect fake news with advanced AI technology</p>
+      <div class="features">
+        <span class="feature-tag"><i class="fas fa-brain"></i> AI-Powered</span>
+        <span class="feature-tag"><i class="fas fa-bolt"></i> Fast Analysis</span>
+        <span class="feature-tag"><i class="fas fa-check-circle"></i> Accurate</span>
+      </div>
+    </header>
+
+    <main class="form-container">
+      <div class="form-header">
+        <h2><i class="fas fa-search"></i> Analyze News Article</h2>
+        <p>Enter the news title and content below for verification</p>
+      </div>
+
+      <form id="newsForm" class="news-form">
+        <div class="input-group">
+          <label for="title">
+            <i class="fas fa-newspaper"></i>
+            News Title
+          </label>
+          <input type="text" id="title" name="title" placeholder="Enter the news headline..." required>
+          <div class="input-border"></div>
         </div>
 
-        <div class="chat-messages" id="chatMessages">
-            <div class="welcome-message">
-                <p>👋 Welcome to TruthGuard! Send me any news, claim, or statement and I'll analyze it for accuracy and potential misinformation.</p>
-            </div>
+        <div class="input-group">
+          <label for="content">
+            <i class="fas fa-file-alt"></i>
+            News Content
+          </label>
+          <textarea id="content" name="content" rows="6" placeholder="Paste the full news article content here..." required></textarea>
+          <div class="input-border"></div>
         </div>
 
-        <div class="chat-input-container">
-            <div class="input-wrapper">
-                <textarea 
-                    class="chat-input" 
-                    id="chatInput" 
-                    placeholder="Paste a news article, claim, or statement to fact-check..."
-                    rows="1"
-                ></textarea>
-                <button class="send-button" id="sendButton">
-                    ➤
-                </button>
-            </div>
-        </div>
-    </div>
+        <button type="submit" class="verify-btn">
+          <span class="btn-text">
+            <i class="fas fa-search"></i>
+            Verify News
+          </span>
+          <div class="btn-loader hidden">
+            <i class="fas fa-spinner fa-spin"></i>
+            Analyzing...
+          </div>
+        </button>
+      </form>
 
-    <script src="script.js"></script>
+      <div id="result" class="result hidden">
+        <div class="result-content">
+          <div class="result-icon"></div>
+          <div class="result-text"></div>
+          <div class="result-confidence"></div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <p>&copy; 2024 TruthGuard. Powered by AI technology.</p>
+    </footer>
+  </div>
+
+  <script src="script.js"></script>
 </body>
 </html>
