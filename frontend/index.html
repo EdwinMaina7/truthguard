@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TruthGuard - AI Fact Checker</title>
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="chat-container">
@@ -14,9 +14,10 @@
                 <p class="chat-subtitle">AI-Powered Fact Checker & Misinformation Detector</p>
                 <div class="status-indicator">
                     <div class="status-dot"></div>
-                    <span>Online & Ready</span>
+                    <span id="statusText">Online & Ready</span>
                 </div>
             </div>
+            <div class="connection-status" id="connectionStatus">Checking...</div>
         </div>
 
         <div class="chat-messages" id="chatMessages">

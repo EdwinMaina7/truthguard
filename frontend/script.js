@@ -3,13 +3,36 @@ class FakeNewsDetector {
         this.chatMessages = document.getElementById('chatMessages');
         this.chatInput = document.getElementById('chatInput');
         this.sendButton = document.getElementById('sendButton');
+        this.statusText = document.getElementById('statusText');
+        this.connectionStatus = document.getElementById('connectionStatus');
         this.isProcessing = false;
         
-        // Configuration
-        this.API_ENDPOINT = 'http://localhost:3000'; // Change this to your model's URL
+        // Configuration - Update this to match your backend URL
+        this.API_ENDPOINT = 'http://localhost:8000'; // FastAPI default port
         
         this.initializeEventListeners();
         this.autoResizeTextarea();
+        this.checkBackendConnection();
+    }
+
+    async checkBackendConnection() {
+        try {
+            const response = await fetch(`${this.API_ENDPOINT}/health`);
+            if (response.ok) {
+                const health = await response.json();
+                this.connectionStatus.textContent = 'Connected';
+                this.connectionStatus.className = 'connection-status connected';
+                this.statusText.textContent = 'Online & Ready';
+                console.log('Backend health:', health);
+            } else {
+                throw new Error('Backend not responding');
+            }
+        } catch (error) {
+            this.connectionStatus.textContent = 'Disconnected';
+            this.connectionStatus.className = 'connection-status disconnected';
+            this.statusText.textContent = 'Backend Offline';
+            console.error('Backend connection failed:', error);
+        }
     }
 
     initializeEventListeners() {
@@ -41,12 +64,9 @@ class FakeNewsDetector {
 
         this.showTypingIndicator();
         
-        // Add realistic processing delay
-        await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000));
-        
-        this.hideTypingIndicator();
         await this.addBotResponse(message);
         
+        this.hideTypingIndicator();
         this.isProcessing = false;
         this.sendButton.disabled = false;
         this.chatInput.focus();
@@ -85,7 +105,7 @@ class FakeNewsDetector {
             messageElement.innerHTML = `
                 <div class="message-avatar bot-avatar">🛡️</div>
                 <div class="message-content bot-message">
-                    <p>I've analyzed your message using my trained AI model. Here's the assessment:</p>
+                    <p>I've analyzed your message using AI models. Here's the assessment:</p>
                     <div class="fact-check-result ${analysis.category}">
                         <div class="fact-check-label">${analysis.label}</div>
                         <p>${analysis.explanation}</p>
@@ -100,6 +120,7 @@ class FakeNewsDetector {
                     <p style="margin-top: 15px; font-size: 14px; color: #666;">
                         💡 ${analysis.tip}
                     </p>
+                    ${analysis.details ? `<details style="margin-top: 10px; font-size: 12px; color: #666;"><summary>Technical Details</summary><pre>${JSON.stringify(analysis.details, null, 2)}</pre></details>` : ''}
                 </div>
             `;
         }
@@ -122,13 +143,19 @@ class FakeNewsDetector {
 
     async analyzeMessage(message) {
         try {
-            const response = await fetch(this.API_ENDPOINT, {
+            // Split message into title and content (simple approach)
+            const sentences = message.split('. ');
+            const title = sentences[0] || message.substring(0, 100);
+            const content = sentences.slice(1).join('. ') || message;
+
+            const response = await fetch(`${this.API_ENDPOINT}/verify_news/`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                    text: message
+                    title: title,
+                    content: content
                 })
             });
 
@@ -137,16 +164,16 @@ class FakeNewsDetector {
             }
 
             const result = await response.json();
-            return this.formatModelResponse(result);
+            return this.formatBackendResponse(result);
             
         } catch (error) {
-            console.error('Error calling model API:', error);
+            console.error('Error calling backend API:', error);
             
             // Fallback response when API is unavailable
             return {
                 category: 'mixed',
                 label: 'Analysis Unavailable',
-                explanation: 'Unable to connect to the fact-checking model. Please check your internet connection and try again.',
+                explanation: 'Unable to connect to the fact-checking backend. Please check if the server is running and try again.',
                 confidence: 0,
                 color: '#6b7280',
                 tip: 'The AI model is currently unavailable. Please verify information manually through credible sources.',
@@ -155,40 +182,36 @@ class FakeNewsDetector {
         }
     }
 
-    formatModelResponse(modelResult) {
-        // Adapt this function based on your model's response format
+    formatBackendResponse(backendResult) {
         let category, label, explanation, confidence, color, tip;
         
-        // Example adaptations for common model response formats:
+        console.log('Backend response:', backendResult);
         
-        // Format 1: {prediction: "fake", confidence: 0.85}
-        if (modelResult.prediction === 'fake' || modelResult.label === 'FAKE') {
+        // Parse the final_decision from your backend
+        const decision = backendResult.final_decision.toLowerCase();
+        
+        if (decision.includes('likely fake') || decision.includes('fake')) {
             category = 'false';
             label = 'Likely Misinformation';
-            explanation = `AI analysis indicates this content is likely false or misleading. ${modelResult.reason || 'The model detected patterns commonly associated with misinformation.'}`;
+            explanation = `AI analysis indicates this content is likely false or misleading. Local model: ${backendResult.local_result}, HF model: ${backendResult.hf_result || 'N/A'}`;
             color = '#ef4444';
+            confidence = 85;
             tip = 'Always verify information through multiple credible sources before sharing.';
-        } 
-        // Format 2: {prediction: "real", confidence: 0.90}
-        else if (modelResult.prediction === 'real' || modelResult.label === 'REAL') {
+        } else if (decision.includes('likely real') || decision.includes('real')) {
             category = 'true';
             label = 'Appears Credible';
-            explanation = `AI analysis suggests this content appears to be credible. ${modelResult.reason || 'The model found indicators of reliable information.'}`;
+            explanation = `AI analysis suggests this content appears to be credible. Local model: ${backendResult.local_result}, HF model: ${backendResult.hf_result || 'N/A'}`;
             color = '#22c55e';
+            confidence = 85;
             tip = 'While this appears credible, consider checking the original sources for complete context.';
-        } 
-        // Format 3: Uncertain or mixed results
-        else {
+        } else {
             category = 'mixed';
-            label = 'Uncertain Classification';
-            explanation = `The AI model couldn't make a definitive determination. ${modelResult.reason || 'The content may need human review for accurate classification.'}`;
+            label = 'Inconclusive Analysis';
+            explanation = `The AI models provided mixed results or couldn't make a definitive determination. Local model: ${backendResult.local_result}, HF model: ${backendResult.hf_result || 'N/A'}`;
             color = '#f59e0b';
+            confidence = 50;
             tip = 'Look for corroborating evidence from multiple independent, credible sources.';
         }
-
-        // Extract confidence score (adapt field name as needed)
-        // Common field names: confidence, score, probability
-        confidence = Math.round((modelResult.confidence || modelResult.score || modelResult.probability || 0.5) * 100);
 
         return {
             category,
@@ -196,7 +219,8 @@ class FakeNewsDetector {
             explanation,
             confidence,
             color,
-            tip
+            tip,
+            details: backendResult // Include raw response for debugging
         };
     }
 
@@ -208,7 +232,7 @@ class FakeNewsDetector {
             <div class="message-avatar bot-avatar">🛡️</div>
             <div class="message-content bot-message">
                 <div class="typing-indicator">
-                    <span>Analyzing content</span>
+                    <span>Analyzing content with AI models</span>
                     <div class="typing-dots">
                         <div class="typing-dot"></div>
                         <div class="typing-dot"></div>
@@ -221,30 +245,10 @@ class FakeNewsDetector {
         this.scrollToBottom();
     }
 
-    hideTypingIndicator() {
-        const typingIndicator = document.getElementById('typingIndicator');
-        if (typingIndicator) {
-            typingIndicator.remove();
+        hideTypingIndicator() {
+            const typingIndicator = document.getElementById('typingIndicator');
+            if (typingIndicator) {
+                typingIndicator.remove();
+            }
         }
     }
-
-    scrollToBottom() {
-        this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
-    }
-
-    escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-}
-
-// Initialize the chatbot when the DOM is loaded
-document.addEventListener('DOMContentLoaded', () => {
-    new FakeNewsDetector();
-});
-
-// Optional: Export for module usage
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = FakeNewsDetector;
-}
