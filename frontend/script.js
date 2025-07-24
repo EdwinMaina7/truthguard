@@ -2,6 +2,7 @@
 const form = document.getElementById("newsForm");
 const resultDiv = document.getElementById("result");
 const submitBtn = document.querySelector(".verify-btn");
+const testConnectionBtn = document.getElementById("testConnection");
 const btnText = document.querySelector(".btn-text");
 const btnLoader = document.querySelector(".btn-loader");
 const resultIcon = document.querySelector(".result-icon");
@@ -41,6 +42,70 @@ document.addEventListener('DOMContentLoaded', function() {
     }, 100);
 });
 
+// Add connection test functionality
+testConnectionBtn.addEventListener('click', async function() {
+    const originalText = this.innerHTML;
+    this.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Testing...';
+    this.disabled = true;
+    
+    try {
+        console.log("Testing server connection...");
+        
+        // Try to reach the root endpoint first
+        const response = await fetch("http://127.0.0.1:8000/", {
+            method: "GET",
+            mode: 'cors'
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            console.log("Server response:", data);
+            
+            // Test the health endpoint
+            const healthResponse = await fetch("http://127.0.0.1:8000/health");
+            const healthData = await healthResponse.json();
+            
+            showError(`
+                ✅ <strong>Server is running!</strong><br><br>
+                📊 Status: ${data.message}<br>
+                🏥 Health: ${healthData.status}<br>
+                🔗 Server URL: <a href="http://127.0.0.1:8000" target="_blank">http://127.0.0.1:8000</a><br>
+                📚 API Docs: <a href="http://127.0.0.1:8000/docs" target="_blank">http://127.0.0.1:8000/docs</a>
+            `);
+            
+            // Change colors to success
+            resultDiv.style.background = 'linear-gradient(135deg, #c6f6d5, #9ae6b4)';
+            resultDiv.style.borderColor = '#68d391';
+            resultDiv.style.color = '#2f855a';
+            resultIcon.innerHTML = '<i class="fas fa-check-circle"></i>';
+            resultText.textContent = 'CONNECTION SUCCESS';
+            
+        } else {
+            throw new Error(`Server responded with status ${response.status}`);
+        }
+        
+    } catch (error) {
+        console.error("Connection test failed:", error);
+        
+        if (error.message.includes('Failed to fetch')) {
+            showError(`
+                🔌 <strong>Cannot connect to server!</strong><br><br>
+                <strong>The server is not running. Please:</strong><br>
+                1. Navigate to your project directory<br>
+                2. Run: <code>python simple_test_backend.py</code><br>
+                3. Or run: <code>uvicorn main:app --reload</code><br>
+                4. Make sure port 8000 is not blocked<br><br>
+                Expected URL: <a href="http://127.0.0.1:8000" target="_blank">http://127.0.0.1:8000</a>
+            `);
+        } else {
+            showError(`Connection failed: ${error.message}`);
+        }
+    } finally {
+        this.innerHTML = originalText;
+        this.disabled = false;
+    }
+});
+
 // Form submission handler
 form.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -59,8 +124,8 @@ form.addEventListener("submit", async (e) => {
     hideResult();
 
     try {
-        // Simulate API call delay for demo purposes
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // First, test if server is reachable
+        console.log("Testing server connection...");
         
         const response = await fetch("http://127.0.0.1:8000/verify_news/", {
             method: "POST",
@@ -70,18 +135,65 @@ form.addEventListener("submit", async (e) => {
             body: JSON.stringify({ title, content }),
         });
 
+        console.log("Response status:", response.status);
+        console.log("Response ok:", response.ok);
+
         if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+            let errorMessage;
+            try {
+                const errorData = await response.json();
+                errorMessage = errorData.detail || `HTTP ${response.status}`;
+                console.log("Error data:", errorData);
+            } catch {
+                const errorText = await response.text();
+                errorMessage = errorText || `HTTP ${response.status}`;
+                console.log("Error text:", errorText);
+            }
+            throw new Error(errorMessage);
         }
 
         const data = await response.json();
+        console.log("Success data:", data);
         
         // Display result with animation
         displayResult(data);
 
     } catch (error) {
-        console.error("Error:", error);
-        showError("Unable to verify news. Please check your connection and try again.");
+        console.error("Full error object:", error);
+        console.error("Error message:", error.message);
+        
+        // Handle specific error types with more detailed messages
+        if (error.name === 'TypeError' && error.message.includes('Failed to fetch')) {
+            showError(`
+                🔌 Cannot connect to server!<br><br>
+                <strong>Troubleshooting steps:</strong><br>
+                1. Make sure your backend is running: <code>python main.py</code><br>
+                2. Check the server URL: <a href="http://127.0.0.1:8000" target="_blank">http://127.0.0.1:8000</a><br>
+                3. Ensure no firewall is blocking port 8000<br>
+                4. Try running: <code>uvicorn main:app --host 127.0.0.1 --port 8000</code>
+            `);
+        } else if (error.message.includes('404') || error.message.includes('Not Found')) {
+            showError(`
+                📍 Endpoint not found!<br><br>
+                The server is running but the <code>/verify_news/</code> endpoint doesn't exist.<br>
+                Make sure you're using the correct backend code.
+            `);
+        } else if (error.message.includes('400')) {
+            showError("❌ Invalid input. Please check your title and content.");
+        } else if (error.message.includes('500')) {
+            showError(`
+                ⚙️ Server error!<br><br>
+                The AI model may not be loaded properly.<br>
+                Check the server console for detailed error messages.
+            `);
+        } else if (error.message.includes('405')) {
+            showError("❌ Method not allowed. The endpoint might not support POST requests.");
+        } else {
+            showError(`
+                ❓ Unexpected error: ${error.message}<br><br>
+                Please check the browser console for more details.
+            `);
+        }
     } finally {
         setLoadingState(false);
     }
@@ -106,18 +218,18 @@ function setLoadingState(isLoading) {
 // Display result with enhanced styling
 function displayResult(data) {
     const decision = data.final_decision.toLowerCase();
-    const confidence = data.confidence || Math.floor(Math.random() * 20) + 80; // Mock confidence if not provided
+    const confidence = data.confidence || 75; // Use API confidence or fallback
     
     // Reset classes
     resultDiv.className = 'result';
     
     // Add appropriate class based on result
-    if (decision.includes('fake') || decision.includes('false')) {
+    if (decision.includes('fake')) {
         resultDiv.classList.add('fake');
         resultIcon.innerHTML = '<i class="fas fa-exclamation-triangle"></i>';
         resultText.textContent = 'FAKE NEWS DETECTED';
         resultConfidence.textContent = `Confidence: ${confidence}% - This appears to be misleading information`;
-    } else if (decision.includes('real') || decision.includes('true')) {
+    } else if (decision.includes('real')) {
         resultDiv.classList.add('real');
         resultIcon.innerHTML = '<i class="fas fa-check-circle"></i>';
         resultText.textContent = 'LEGITIMATE NEWS';
@@ -129,7 +241,26 @@ function displayResult(data) {
         resultDiv.style.color = '#c05621';
         resultIcon.innerHTML = '<i class="fas fa-question-circle"></i>';
         resultText.textContent = 'UNCERTAIN RESULT';
-        resultConfidence.textContent = `Unable to determine authenticity with high confidence`;
+        resultConfidence.textContent = `Confidence: ${confidence}% - Unable to determine authenticity with high confidence`;
+    }
+    
+    // Add detailed analysis if available
+    if (data.local_result || data.hf_result) {
+        const details = document.createElement('div');
+        details.style.cssText = `
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid rgba(255,255,255,0.3);
+            font-size: 0.9rem;
+            opacity: 0.8;
+        `;
+        
+        let detailText = 'Analysis Details: ';
+        if (data.local_result) detailText += `Local Model: ${data.local_result}`;
+        if (data.hf_result) detailText += ` | HuggingFace Model: ${data.hf_result}`;
+        
+        details.textContent = detailText;
+        resultDiv.querySelector('.result-content').appendChild(details);
     }
     
     // Show result with animation
@@ -171,7 +302,7 @@ function showError(message) {
     
     resultIcon.innerHTML = '<i class="fas fa-times-circle"></i>';
     resultText.textContent = 'ERROR';
-    resultConfidence.textContent = message;
+    resultConfidence.innerHTML = message; // Use innerHTML to support HTML formatting
     
     showResult();
 }
