@@ -106,9 +106,7 @@ HF_TOKEN=your_huggingface_token_here
 
 ## ✅ TODO / Improvements
 
-* [ ] Deploy to Hugging Face Spaces or Render
-* [ ] Improve frontend UI/UX
-* [ ] Add user authentication (optional)
+* [ ] Add user authentication 
 * [ ] Log and analyze prediction history
 
 ## 📄 License
