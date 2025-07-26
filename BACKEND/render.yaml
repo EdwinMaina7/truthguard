@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: truthguard-api
+    env: python
+    rootDir: BACKEND  # Points to the backend directory
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9
+      - key: MODEL_PATH
+        value: ./models
+      - key: HUGGINGFACE_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
