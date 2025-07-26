@@ -1,122 +1,113 @@
+# TruthGuard - AI-Powered Fake News Detection
 
-# 🛡️ TruthGuard
+TruthGuard is a sophisticated fake news detection platform that leverages multiple AI models and natural language processing to analyze and verify news content.
 
-**TruthGuard** is an AI-powered fake news detection system built using **FastAPI**, **machine learning models**, and a simple **HTML/CSS/JavaScript frontend**. It provides a user-friendly interface to verify the credibility of news articles in real time.
+## Features
 
-## 🚀 Features
+- Real-time news content analysis
+- URL and text-based input support
+- Multiple AI model ensemble for improved accuracy
+- Dark/Light theme support
+- Responsive design
+- Detailed analysis with recommendations
 
-- RESTful API built with FastAPI
-- Integrated machine learning model for news verification
-- `/verify_news/` endpoint to check text authenticity
-- Simple HTML/CSS/JS frontend for interaction
-- Hugging Face & sklearn model support
-- Environment-based config with `.env`
+## Tech Stack
 
-## 📂 Project Structure
+### Frontend
+- HTML5, CSS3, JavaScript
+- Font Awesome icons
+- Responsive design with CSS Grid/Flexbox
+- Theme persistence using localStorage
 
+### Backend
+- FastAPI (Python)
+- Multiple AI Models:
+  - Local trained model (RandomForest)
+  - HuggingFace models ensemble
+  - Google Gemini for detailed analysis
+- NLTK for text processing
+- scikit-learn for machine learning
+
+## Setup
+
+1. **Clone the repository**
+```bash
+git clone <repository-url>
+cd news
 ```
 
-truthguard/
-├── BACKEND/              # FastAPI app with ML model
-│   ├── main.py
-│   ├── model/            # Your model, vectorizer, etc.
-│   └── .env              # (ignored) contains Hugging Face token
-├── frontend/             # Static frontend files
-│   ├── index.html
-│   ├── script.js
-│   └── style.css
-├── FAKE NEWS/            # Large CSV datasets (ignored from Git)
-│   ├── Fake.csv
-│   └── True.csv
-├── .gitignore
-└── README.md
-
-````
-
-## ⚙️ Setup Instructions
-
-### 1. Create Virtual Environment
-
+2. **Set up Python virtual environment**
 ```bash
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-````
+.\venv\Scripts\activate
+```
 
-### 2. Install Dependencies
-
+3. **Install dependencies**
 ```bash
 pip install -r requirements.txt
 ```
 
-> Required packages include:
-> fastapi, uvicorn, scikit-learn, transformers, pydantic, python-dotenv
+4. **Set up environment variables**
+Create a `.env` file in the project root:
+```
+HUGGINGFACE_API_KEY=your_key_here
+GEMINI_API_KEY=your_key_here
+```
 
-### 3. Run the App
+5. **Run the backend server**
+```bash
+cd backend
+python main.py
+```
 
+6. **Serve the frontend**
+```bash
+cd frontend
+python -m http.server 3000
+```
+
+7. **Access the application**
+Open your browser and navigate to:
+```
+http://localhost:3000
+```
+
+## API Endpoints
+
+- `GET /health` - Health check endpoint
+- `POST /analyze` - Analyze news content
+- `POST /analyze/batch` - Batch analysis (max 10 requests)
+
+## Development
+
+### Prerequisites
+- Python 3.8+
+- Node.js (optional, for development tools)
+- API keys for HuggingFace and Google Gemini
+
+### Local Development
+1. Start the backend in development mode:
 ```bash
 uvicorn main:app --reload
 ```
 
-Visit: [http://localhost:8000](http://localhost:8000)
+2. Open frontend/index.html in your browser or use a local server
 
-## 📡 API Endpoints
+## Contributing
 
-| Endpoint        | Method | Description                   |
-| --------------- | ------ | ----------------------------- |
-| `/health`       | GET    | Health check                  |
-| `/verify_news/` | POST   | Submit news text for analysis |
-| `/docs`         | GET    | Swagger UI (interactive docs) |
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
-## 🧪 Example Usage
+## License
 
-**POST** `/verify_news/`
+[Your chosen license]
 
-Request body:
+## Acknowledgments
 
-```json
-{
-  "text": "The government has approved a new policy..."
-}
-```
-
-Response:
-
-```json
-{
-  "label": "REAL",
-  "confidence": 0.92
-}
-```
-
-## 🔐 Environment Variables
-
-Create a `.env` file in `BACKEND/`:
-
-```env
-HF_TOKEN=your_huggingface_token_here
-```
-
-> ⚠️ Do not commit real tokens. Add `.env` to `.gitignore` and use a `.env.example` for safe sharing.
-
-## ⚠️ Notes
-
-* Large files (`Fake.csv`, `True.csv`) are ignored from Git — consider using Git LFS or external hosting.
-* GitHub blocks pushes with secrets — remove them from commit history before pushing.
-* Use `git filter-repo` or `BFG` to clean secrets and large files from your repo history if needed.
-
-## ✅ TODO / Improvements
-
-* [ ] Add user authentication 
-* [ ] Log and analyze prediction history
-
-## 📄 License
-
-MIT License
-
-## 👨‍💻 Author
-
-**Edwin Maina**
-GitHub: [@EdwinMaina7](https://github.com/EdwinMaina7)
-
-```
+- HuggingFace for providing AI models
+- Google Gemini for advanced text analysis
+- FastAPI for the backend framework
 
