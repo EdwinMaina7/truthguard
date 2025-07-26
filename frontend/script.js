@@ -155,45 +155,58 @@ form.addEventListener("submit", async (e) => {
         const data = await response.json();
         console.log("Success data:", data);
         
-        // Display result with animation
-        displayResult(data);
-
-    } catch (error) {
-        console.error("Full error object:", error);
-        console.error("Error message:", error.message);
+        // Enhanced result display
+        resultDiv.classList.remove('hidden');
         
-        // Handle specific error types with more detailed messages
-        if (error.name === 'TypeError' && error.message.includes('Failed to fetch')) {
-            showError(`
-                🔌 Cannot connect to server!<br><br>
-                <strong>Troubleshooting steps:</strong><br>
-                1. Make sure your backend is running: <code>python main.py</code><br>
-                2. Check the server URL: <a href="http://127.0.0.1:8000" target="_blank">http://127.0.0.1:8000</a><br>
-                3. Ensure no firewall is blocking port 8000<br>
-                4. Try running: <code>uvicorn main:app --host 127.0.0.1 --port 8000</code>
-            `);
-        } else if (error.message.includes('404') || error.message.includes('Not Found')) {
-            showError(`
-                📍 Endpoint not found!<br><br>
-                The server is running but the <code>/verify_news/</code> endpoint doesn't exist.<br>
-                Make sure you're using the correct backend code.
-            `);
-        } else if (error.message.includes('400')) {
-            showError("❌ Invalid input. Please check your title and content.");
-        } else if (error.message.includes('500')) {
-            showError(`
-                ⚙️ Server error!<br><br>
-                The AI model may not be loaded properly.<br>
-                Check the server console for detailed error messages.
-            `);
-        } else if (error.message.includes('405')) {
-            showError("❌ Method not allowed. The endpoint might not support POST requests.");
-        } else {
-            showError(`
-                ❓ Unexpected error: ${error.message}<br><br>
-                Please check the browser console for more details.
-            `);
-        }
+        // Calculate confidence percentage
+        const confidencePercent = (data.confidence * 100).toFixed(1);
+        
+        // Determine verdict class and icon
+        const verdictClass = data.verdict.toLowerCase();
+        const verdictIcon = verdictClass === 'fake' ? '⚠️' : '✓';
+        
+        // Format model sources
+        const modelList = data.model_sources.join(', ');
+        
+        // Format processing time
+        const processTime = data.processing_time.toFixed(2);
+
+        resultDiv.innerHTML = `
+            <div class="result-header ${verdictClass}">
+                <div class="verdict">
+                    <span class="verdict-icon">${verdictIcon}</span>
+                    ${data.verdict}
+                </div>
+                <div class="confidence-meter">
+                    <div class="confidence-bar" style="width: ${confidencePercent}%"></div>
+                    <div class="confidence-value">${confidencePercent}% Confidence</div>
+                </div>
+            </div>
+            <div class="analysis-details">
+                <div class="explanation">
+                    <h3>Analysis Explanation:</h3>
+                    <p>${data.explanation}</p>
+                </div>
+                <div class="model-sources">
+                    <h3>AI Models Used:</h3>
+                    <p>${modelList}</p>
+                </div>
+                <div class="processing-info">
+                    <p>Analysis completed in ${processTime} seconds</p>
+                    <p>Timestamp: ${new Date(data.timestamp).toLocaleString()}</p>
+                </div>
+            </div>
+        `;
+    } catch (error) {
+        resultDiv.classList.remove('hidden');
+        resultDiv.innerHTML = `
+            <div class="error">
+                <span class="error-icon">❌</span>
+                <h3>Analysis Error</h3>
+                <p>${error.message}</p>
+                <p>Please try again with different content or URL.</p>
+            </div>
+        `;
     } finally {
         setLoadingState(false);
     }

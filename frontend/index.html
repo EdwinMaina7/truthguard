@@ -1,87 +1,166 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>TruthGuard – AI-Powered Fake News Detection</title>
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-  <link href="styles.css" rel="stylesheet" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TruthGuard - Fake News Detection</title>
+    <link href="styles.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
 </head>
 <body>
-  <div class="background-elements">
-    <div class="floating-shape shape-1"></div>
-    <div class="floating-shape shape-2"></div>
-    <div class="floating-shape shape-3"></div>
-  </div>
+    <div class="container">
+        <header class="hero-section">
+            <div class="theme-switch">
+                <button id="themeToggle" class="theme-btn">
+                    <i class="fas fa-sun light-icon"></i>
+                    <i class="fas fa-moon dark-icon"></i>
+                </button>
+                <span class="theme-label" role="button" tabindex="0">Light Mode</span>
+            </div>
+            <h1>TruthGuard</h1>
+            <p class="subtitle">AI-Powered Fake News Detection</p>
+        </header>
 
-  <div class="container">
-    <header class="hero-section">
-      <div class="logo-container">
-        <i class="fas fa-shield-alt logo-icon"></i>
-        <h1>TruthGuard</h1>
-      </div>
-      <p class="subtitle">Detect fake news with advanced AI technology</p>
-      <div class="features">
-        <span class="feature-tag"><i class="fas fa-brain"></i> AI-Powered</span>
-        <span class="feature-tag"><i class="fas fa-bolt"></i> Fast Analysis</span>
-        <span class="feature-tag"><i class="fas fa-check-circle"></i> Accurate</span>
-      </div>
-    </header>
+        <main class="form-container">
+            <form id="analyzeForm">
+                <div class="input-group">
+                    <label for="url">News URL (optional)</label>
+                    <input type="url" id="url" name="url" placeholder="https://example.com/news">
+                </div>
 
-    <main class="form-container">
-      <div class="form-header">
-        <h2><i class="fas fa-search"></i> Analyze News Article</h2>
-        <p>Enter the news title and content below for verification</p>
-        <button type="button" id="testConnection" class="test-connection-btn">
-          <i class="fas fa-wifi"></i> Test Server Connection
-        </button>
-      </div>
+                <div class="input-group">
+                    <label for="text">Or paste news content</label>
+                    <textarea id="text" name="text" rows="6" placeholder="Paste news content here..."></textarea>
+                </div>
 
-      <form id="newsForm" class="news-form">
-        <div class="input-group">
-          <label for="title">
-            <i class="fas fa-newspaper"></i>
-            News Title
-          </label>
-          <input type="text" id="title" name="title" placeholder="Enter the news headline..." required>
-          <div class="input-border"></div>
-        </div>
+                <button type="submit" class="analyze-btn">
+                    <span class="btn-text">Analyze</span>
+                    <span class="btn-loader hidden"><i class="fas fa-spinner fa-spin"></i></span>
+                </button>
+            </form>
 
-        <div class="input-group">
-          <label for="content">
-            <i class="fas fa-file-alt"></i>
-            News Content
-          </label>
-          <textarea id="content" name="content" rows="6" placeholder="Paste the full news article content here..." required></textarea>
-          <div class="input-border"></div>
-        </div>
+            <div id="result" class="result hidden">
+                <div class="result-header">
+                    <div class="verdict"></div>
+                    <div class="confidence-meter">
+                        <div class="confidence-bar"></div>
+                        <div class="confidence-value"></div>
+                    </div>
+                </div>
+                <div class="analysis-details">
+                    <div class="explanation"></div>
+                    <div class="model-sources"></div>
+                    <div class="processing-info"></div>
+                </div>
+            </div>
+        </main>
+    </div>
 
-        <button type="submit" class="verify-btn">
-          <span class="btn-text">
-            <i class="fas fa-search"></i>
-            Verify News
-          </span>
-          <div class="btn-loader hidden">
-            <i class="fas fa-spinner fa-spin"></i>
-            Analyzing...
-          </div>
-        </button>
-      </form>
+    <script>
+        const API_URL = 'http://127.0.0.1:8000';
+        const form = document.getElementById('analyzeForm');
+        const result = document.getElementById('result');
 
-      <div id="result" class="result hidden">
-        <div class="result-content">
-          <div class="result-icon"></div>
-          <div class="result-text"></div>
-          <div class="result-confidence"></div>
-        </div>
-      </div>
-    </main>
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const url = document.getElementById('url').value;
+            const text = document.getElementById('text').value;
 
-    <footer class="footer">
-      <p>&copy; 2024 TruthGuard. Powered by AI technology.</p>
-    </footer>
-  </div>
+            if (!url && !text) {
+                alert('Please provide either a URL or news content');
+                return;
+            }
 
-  <script src="script.js"></script>
+            // Show loading state
+            const btn = form.querySelector('button');
+            btn.disabled = true;
+            btn.querySelector('.btn-text').classList.add('hidden');
+            btn.querySelector('.btn-loader').classList.remove('hidden');
+
+            try {
+                const response = await fetch(`${API_URL}/analyze`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        url: url || null,
+                        text: text || null
+                    })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Analysis failed');
+                }
+
+                // Update the result display section
+                result.classList.remove('hidden');
+                result.innerHTML = `
+                    <div class="result-header ${data.verdict.toLowerCase()}">
+                        <div class="verdict">
+                            <span class="verdict-icon">${data.verdict.toLowerCase() === 'fake' ? '⚠️' : '✓'}</span>
+                            <span class="verdict-text">${data.verdict}</span>
+                        </div>
+                    </div>
+                    <div class="analysis-details">
+                        <div class="key-findings">
+                            <h3>Key Findings</h3>
+                            <p>${data.explanation}</p>
+                        </div>
+                        <div class="recommendations">
+                            <h4>What to do next:</h4>
+                            <ul>
+                                <li>Verify with trusted news sources</li>
+                                <li>Check the original context</li>
+                                <li>Look for multiple reliable sources</li>
+                            </ul>
+                        </div>
+                    </div>
+                `;
+
+            } catch (error) {
+                result.classList.remove('hidden');
+                result.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            } finally {
+                // Reset button state
+                btn.disabled = false;
+                btn.querySelector('.btn-text').classList.remove('hidden');
+                btn.querySelector('.btn-loader').classList.add('hidden');
+            }
+        });
+
+        // Replace the existing theme switching code
+        const themeToggle = document.getElementById('themeToggle');
+        const themeLabel = document.querySelector('.theme-label');
+
+        function toggleTheme() {
+            const currentTheme = document.documentElement.getAttribute('data-theme');
+            const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+            
+            document.documentElement.setAttribute('data-theme', newTheme);
+            localStorage.setItem('theme', newTheme);
+            themeLabel.textContent = `${newTheme.charAt(0).toUpperCase() + newTheme.slice(1)} Mode`;
+        }
+
+        // Check for saved theme preference
+        const savedTheme = localStorage.getItem('theme') || 'light';
+        document.documentElement.setAttribute('data-theme', savedTheme);
+        themeLabel.textContent = `${savedTheme.charAt(0).toUpperCase() + savedTheme.slice(1)} Mode`;
+
+        // Add click handlers
+        themeToggle.addEventListener('click', toggleTheme);
+        themeLabel.addEventListener('click', toggleTheme);
+
+        // Add keyboard handler for accessibility
+        themeLabel.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                toggleTheme();
+            }
+        });
+    </script>
 </body>
 </html>

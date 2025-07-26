@@ -1,358 +1,774 @@
-import os
-import re
-import joblib
-import logging
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from huggingface_hub import InferenceClient
-from dotenv import load_dotenv
-import uvicorn
+from pydantic import BaseModel, HttpUrl, field_validator, model_validator
+from typing import Optional, List, Dict, Any
+import httpx
+import asyncio
+import logging
+from datetime import datetime
+import re
+import os
+from urllib.parse import urlparse
+import json
+import pickle
+import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+import google.generativeai as genai
+from bs4 import BeautifulSoup
+import nltk
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+from nltk.stem import WordNetLemmatizer
+import warnings
 
-# Set up detailed logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+warnings.filterwarnings("ignore")
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-load_dotenv()
+# Initialize FastAPI app
+app = FastAPI(
+    title="TruthGuard API",
+    description="AI-powered fake news detection platform",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
 
-app = FastAPI(title="TruthGuard API", description="Fake News Detection API", version="1.0.0")
-
-# Add CORS middleware to allow frontend requests
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific origins
+    allow_origins=["*"],  # Configure appropriately for production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Initialize variables
-model = None
+# Environment variables
+HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+MODEL_PATH = os.getenv("MODEL_PATH", "./models/")
+MODEL_FILE = os.getenv("MODEL_FILE", "fake_news_logreg_model.pkl")
+VECTORIZER_FILE = os.getenv("VECTORIZER_FILE", "tfidf_vectorizer.pkl")
+
+# Configure Google Gemini
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+
+# Download required NLTK data
+try:
+    nltk.download('punkt', quiet=True)
+    nltk.download('stopwords', quiet=True)
+    nltk.download('wordnet', quiet=True)
+except:
+    logger.warning("Could not download NLTK data")
+
+# Global variables for model components
+local_model = None
 vectorizer = None
-hf_client = None
+lemmatizer = WordNetLemmatizer()
+stop_words = set(stopwords.words('english'))
 
-# Check current working directory and files
-current_dir = os.getcwd()
-logger.info(f"📁 Current working directory: {current_dir}")
-logger.info(f"📂 Files in current directory: {os.listdir(current_dir)}")
-
-# Model file paths
-model_file = "fake_news_logreg_model.pkl"
-vectorizer_file = "tfidf_vectorizer.pkl"
-
-# Check for model files existence
-model_exists = os.path.exists(model_file)
-vectorizer_exists = os.path.exists(vectorizer_file)
-
-logger.info(f"🔍 Looking for model file: {model_file}")
-logger.info(f"{'✅' if model_exists else '❌'} Model file exists: {model_exists}")
-if model_exists:
-    logger.info(f"📏 Model file size: {os.path.getsize(model_file)} bytes")
-
-logger.info(f"🔍 Looking for vectorizer file: {vectorizer_file}")
-logger.info(f"{'✅' if vectorizer_exists else '❌'} Vectorizer file exists: {vectorizer_exists}")
-if vectorizer_exists:
-    logger.info(f"📏 Vectorizer file size: {os.path.getsize(vectorizer_file)} bytes")
-
-# Try to load local model with detailed error reporting
-try:
-    if not model_exists:
-        raise FileNotFoundError(f"Model file '{model_file}' not found in {current_dir}")
+class NewsRequest(BaseModel):
+    text: Optional[str] = None
+    url: Optional[HttpUrl] = None
     
-    logger.info("🔄 Attempting to load model...")
-    model = joblib.load(model_file)
-    logger.info(f"✅ Local model loaded successfully. Type: {type(model)}")
-    logger.info(f"🔧 Model has predict method: {hasattr(model, 'predict')}")
-    logger.info(f"🔧 Model has predict_proba method: {hasattr(model, 'predict_proba')}")
-except FileNotFoundError as e:
-    logger.error(f"❌ {e}")
-    logger.error("💡 Hint: Make sure your .pkl files are in the same directory as main.py")
-except Exception as e:
-    logger.error(f"❌ Failed to load local model: {type(e).__name__}: {e}")
+    @model_validator(mode='after')
+    def validate_input(self):
+        if not self.text and not self.url:
+            raise ValueError('Either text or url must be provided')
+        return self
 
-# Try to load vectorizer with detailed error reporting
-try:
-    if not vectorizer_exists:
-        raise FileNotFoundError(f"Vectorizer file '{vectorizer_file}' not found in {current_dir}")
+class PredictionResponse(BaseModel):
+    verdict: str
+    explanation: str
+    timestamp: datetime
+    processing_time: float
+    model_sources: List[str]
+    article_metadata: Optional[Dict[str, Any]] = None
+    confidence: Optional[float] = None  # Make confidence optional
+
+class HealthResponse(BaseModel):
+    status: str
+    models_loaded: Dict[str, bool]
+    api_status: Dict[str, str]
+
+# Text preprocessing utilities
+def preprocess_text(text: str) -> str:
+    """Clean and preprocess text for analysis"""
+    if not text:
+        return ""
     
-    logger.info("🔄 Attempting to load vectorizer...")
-    vectorizer = joblib.load(vectorizer_file)
-    logger.info(f"✅ Vectorizer loaded successfully. Type: {type(vectorizer)}")
-    logger.info(f"🔧 Vectorizer has transform method: {hasattr(vectorizer, 'transform')}")
-except FileNotFoundError as e:
-    logger.error(f"❌ {e}")
-    logger.error("💡 Hint: Make sure your .pkl files are in the same directory as main.py")
-except Exception as e:
-    logger.error(f"❌ Failed to load vectorizer: {type(e).__name__}: {e}")
-
-# Check environment variables
-HF_TOKEN = os.getenv("HF_TOKEN")
-HF_FAKE_NEWS_MODEL = os.getenv("HF_FAKE_NEWS_MODEL")
-HF_HATE_SPEECH_MODEL = os.getenv("HF_HATE_SPEECH_MODEL")
-
-logger.info(f"🔑 HF_TOKEN present: {HF_TOKEN is not None}")
-logger.info(f"🤖 HF_FAKE_NEWS_MODEL: {HF_FAKE_NEWS_MODEL}")
-logger.info(f"🤖 HF_HATE_SPEECH_MODEL: {HF_HATE_SPEECH_MODEL}")
-
-if not HF_TOKEN:
-    logger.warning("⚠️ HF_TOKEN not found in environment variables")
-    logger.info("💡 Add HF_TOKEN=your_token to your .env file for Hugging Face models")
-else:
-    try:
-        hf_client = InferenceClient(api_key=HF_TOKEN)
-        logger.info("✅ Hugging Face client initialized successfully")
-    except Exception as e:
-        logger.error(f"❌ Failed to initialize HF client: {e}")
-
-class NewsInput(BaseModel):
-    title: str
-    content: str
-
-class NewsResponse(BaseModel):
-    final_decision: str
-    local_result: str = None
-    hf_result: str = None
-    confidence: int = None
-
-def clean(text):
-    try:
-        text = re.sub(r"[^a-zA-Z ]", "", text)
-        return text.lower()
-    except Exception as e:
-        logger.error(f"❌ Error in clean function: {e}")
-        raise
-
-def run_local_model(text):
-    try:
-        if model is None:
-            raise ValueError("Local model is None - not loaded properly")
-        if vectorizer is None:
-            raise ValueError("Vectorizer is None - not loaded properly")
-        
-        logger.info(f"🔍 Processing text of length: {len(text)}")
-        cleaned = clean(text)
-        logger.info(f"🧹 Cleaned text length: {len(cleaned)}")
-        
-        features = vectorizer.transform([cleaned])
-        logger.info(f"📊 Features shape: {features.shape}")
-        
-        prediction = model.predict(features)[0]
-        logger.info(f"🎯 Raw prediction: {prediction}")
-        
-        # Get prediction probability for confidence score
-        try:
-            probabilities = model.predict_proba(features)[0]
-            confidence = int(max(probabilities) * 100)
-            logger.info(f"📈 Prediction probabilities: {probabilities}")
-            logger.info(f"📊 Confidence: {confidence}%")
-        except Exception as e:
-            logger.warning(f"⚠️ Could not get probabilities: {e}")
-            confidence = 75  # Default confidence
-        
-        result = "real" if prediction == 1 else "fake"
-        logger.info(f"✅ Final local result: {result} (confidence: {confidence}%)")
-        
-        return result, confidence
-    except Exception as e:
-        logger.error(f"❌ Error in run_local_model: {type(e).__name__}: {e}")
-        raise
-
-def run_huggingface_model(text, model_type="fake_news"):
-    try:
-        if hf_client is None:
-            raise ValueError("Hugging Face client not initialized")
-        
-        if model_type == "fake_news":
-            model_name = HF_FAKE_NEWS_MODEL
-        elif model_type == "hate_speech":
-            model_name = HF_HATE_SPEECH_MODEL
-        else:
-            return "unsupported model", 0
-
-        if not model_name:
-            raise ValueError(f"Model name for {model_type} not found in environment variables")
-
-        logger.info(f"🤖 Calling HF model: {model_name}")
-        result = hf_client.text_classification(text, model=model_name)
-        logger.info(f"📤 HF raw result: {result}")
-        
-        label = result[0]["label"].lower()
-        confidence = int(result[0]["score"] * 100)
-        logger.info(f"✅ HF result: {label} (confidence: {confidence}%)")
-        
-        return label, confidence
-    except Exception as e:
-        logger.error(f"❌ Error in run_huggingface_model: {e}")
-        raise
-
-@app.get("/")
-def read_root():
-    logger.info("🏠 Root endpoint accessed")
-    return {
-        "message": "TruthGuard API with ML Models",
-        "version": "1.0.0",
-        "models_status": {
-            "local_model_loaded": model is not None,
-            "vectorizer_loaded": vectorizer is not None,
-            "hf_client_ready": hf_client is not None,
-            "ready_for_analysis": model is not None and vectorizer is not None
-        },
-        "endpoints": {
-            "health": "/health",
-            "verify_news": "/verify_news/",
-            "debug": "/debug",
-            "docs": "/docs"
-        }
-    }
-
-@app.get("/debug")
-def debug_info():
-    """Detailed debug information"""
-    logger.info("🔍 Debug endpoint accessed")
-    return {
-        "system_info": {
-            "working_directory": current_dir,
-            "files_in_directory": os.listdir("."),
-            "model_file_exists": os.path.exists(model_file),
-            "vectorizer_file_exists": os.path.exists(vectorizer_file)
-        },
-        "models_status": {
-            "model_loaded": model is not None,
-            "vectorizer_loaded": vectorizer is not None,
-            "model_type": str(type(model)) if model else None,
-            "vectorizer_type": str(type(vectorizer)) if vectorizer else None
-        },
-        "huggingface_status": {
-            "hf_client_initialized": hf_client is not None,
-            "hf_token_present": HF_TOKEN is not None,
-            "hf_fake_news_model": HF_FAKE_NEWS_MODEL,
-            "hf_hate_speech_model": HF_HATE_SPEECH_MODEL
-        }
-    }
-
-@app.get("/health")
-def health_check():
-    logger.info("🏥 Health check accessed")
-    can_process = model is not None and vectorizer is not None
+    # Convert to lowercase
+    text = text.lower()
     
-    return {
-        "status": "healthy" if can_process else "degraded",
-        "local_model_loaded": model is not None,
-        "vectorizer_loaded": vectorizer is not None,
-        "hf_client_initialized": hf_client is not None,
-        "can_process_requests": can_process,
-        "message": "Ready for news analysis" if can_process else "Local models not loaded - check server logs"
-    }
-
-@app.post("/verify_news/", response_model=NewsResponse)
-def verify_news(news: NewsInput):
-    logger.info("📰 === New News Verification Request ===")
-    logger.info(f"📝 Title: {news.title[:100]}{'...' if len(news.title) > 100 else ''}")
-    logger.info(f"📄 Content length: {len(news.content)} characters")
+    # Less aggressive cleaning for short texts
+    if len(text.split()) < 20:
+        # Only remove special characters but keep more context
+        text = re.sub(r'[^\w\s.,!?]', '', text)
+        return text.strip()
+    
+    # Regular cleaning for longer texts
+    text = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', '', text)
+    text = re.sub(r'\S+@\S+', '', text)
+    text = re.sub(r'[^a-zA-Z\s]', '', text)
     
     try:
-        # Validate input
-        if not news.title.strip() or not news.content.strip():
-            logger.warning("❌ Empty title or content provided")
-            raise HTTPException(status_code=400, detail="Title and content cannot be empty")
-        
-        text = f"{news.title} {news.content}"
-        logger.info(f"🔗 Combined text length: {len(text)} characters")
-        
-        # Check if we have the necessary components for local model
-        if model is None or vectorizer is None:
-            error_msg = "Local ML models not loaded. Check server logs for model loading errors."
-            logger.error(f"❌ {error_msg}")
-            raise HTTPException(status_code=500, detail=error_msg)
+        tokens = word_tokenize(text)
+        # Keep more words for context in short texts
+        tokens = [lemmatizer.lemmatize(token) for token in tokens 
+                 if len(token) > 1]  # Less strict filtering
+        return ' '.join(tokens)
+    except:
+        words = text.split()
+        return ' '.join([word for word in words if len(word) > 1])
 
-        # Run local model
-        logger.info("🚀 Running local model analysis...")
-        local_result, local_confidence = run_local_model(text)
-        logger.info(f"✅ Local model result: {local_result} ({local_confidence}% confidence)")
+# Model loading functions
+async def load_local_model():
+    """Load or create an improved local model"""
+    global local_model, vectorizer
+    
+    try:
+        model_file = os.path.join(MODEL_PATH, MODEL_FILE)
+        vectorizer_file = os.path.join(MODEL_PATH, VECTORIZER_FILE)
         
-        # Try HF model if available, otherwise use only local model
-        hf_result = None
-        hf_confidence = 0
-        if hf_client is not None and HF_FAKE_NEWS_MODEL is not None:
+        logger.info(f"Looking for model files:")
+        logger.info(f"  Model file: {model_file} (exists: {os.path.exists(model_file)})")
+        logger.info(f"  Vectorizer file: {vectorizer_file} (exists: {os.path.exists(vectorizer_file)})")
+        
+        if os.path.exists(model_file) and os.path.exists(vectorizer_file):
             try:
-                logger.info("🚀 Running Hugging Face model analysis...")
-                hf_result, hf_confidence = run_huggingface_model(text, model_type="fake_news")
-                logger.info(f"✅ HF model result: {hf_result} ({hf_confidence}% confidence)")
-            except Exception as e:
-                logger.warning(f"⚠️ HF model failed, using local only: {e}")
+                # Try loading the model
+                logger.info(f"Attempting to load model from {model_file}")
+                with open(model_file, 'rb') as f:
+                    local_model = pickle.load(f)
+                logger.info(f"Model loaded successfully: {type(local_model)}")
+                
+                # Try loading the vectorizer
+                logger.info(f"Attempting to load vectorizer from {vectorizer_file}")
+                with open(vectorizer_file, 'rb') as f:
+                    vectorizer = pickle.load(f)
+                logger.info(f"Vectorizer loaded successfully: {type(vectorizer)}")
+                
+                return
+                
+            except (pickle.UnpicklingError, EOFError, ValueError) as pickle_error:
+                logger.error(f"Pickle loading error: {str(pickle_error)}")
+                logger.info("Attempting to load with different pickle protocols...")
+                
+                # Try alternative loading methods
+                try:
+                    import joblib
+                    logger.info("Trying joblib to load model...")
+                    local_model = joblib.load(model_file)
+                    vectorizer = joblib.load(vectorizer_file)
+                    logger.info("Successfully loaded using joblib!")
+                    return
+                except Exception as joblib_error:
+                    logger.error(f"Joblib loading failed: {str(joblib_error)}")
+                
+                # Try different pickle protocols
+                for protocol in [0, 1, 2, 3, 4, 5]:
+                    try:
+                        logger.info(f"Trying pickle protocol {protocol}...")
+                        with open(model_file, 'rb') as f:
+                            local_model = pickle.load(f)
+                        with open(vectorizer_file, 'rb') as f:
+                            vectorizer = pickle.load(f)
+                        logger.info(f"Successfully loaded with protocol {protocol}!")
+                        return
+                    except:
+                        continue
+                
+                logger.error("All loading methods failed, creating fallback model")
+                raise pickle_error
+                
         else:
-            logger.info("ℹ️ Hugging Face model not available, using local model only")
-        
-        # Decision logic with confidence calculation
-        if hf_result is not None:
-            avg_confidence = (local_confidence + hf_confidence) // 2
-            logger.info(f"🧮 Combining results - Local: {local_result}, HF: {hf_result}")
+            logger.warning(f"One or both model files not found, creating fallback model")
             
-            # Map HF labels to our format
-            hf_normalized = "fake" if "fake" in hf_result.lower() or "label_1" in hf_result.lower() else "real"
-            
-            if local_result == "fake" and hf_normalized == "fake":
-                final_decision = "fake"
-                confidence = avg_confidence
-            elif local_result == "real" and hf_normalized == "real":
-                final_decision = "real"
-                confidence = avg_confidence
-            else:
-                final_decision = "uncertain"
-                confidence = min(local_confidence, hf_confidence)
-        else:
-            # Use only local model result
-            final_decision = local_result
-            confidence = local_confidence
+    except Exception as e:
+        logger.error(f"Error loading local model: {str(e)}")
+        logger.info("Creating fallback model for demonstration...")
         
-        logger.info(f"🎯 Final decision: {final_decision} (confidence: {confidence}%)")
-        logger.info("📰 === Analysis Complete ===")
-        
-        return NewsResponse(
-            final_decision=final_decision,
-            local_result=local_result,
-            hf_result=hf_result,
-            confidence=confidence
+    # Create fallback model
+    try:
+        logger.info("Creating enhanced fallback model...")
+        vectorizer = TfidfVectorizer(
+            max_features=20000,
+            ngram_range=(1, 3),
+            stop_words='english',
+            min_df=2
         )
+        
+        # Use a more sophisticated model
+        from sklearn.ensemble import RandomForestClassifier
+        local_model = RandomForestClassifier(
+            n_estimators=100,
+            max_depth=10,
+            random_state=42
+        )
+        
+        # Enhanced training data with more examples
+        sample_texts = [
+            # Real news examples
+            "According to a peer-reviewed study published in Nature, researchers found...",
+            "The government released official statistics showing economic growth...",
+            "In yesterday's press conference, the health minister announced...",
+            "Scientists at the university conducted experiments demonstrating...",
+            "Local authorities confirmed three cases of...",
+            
+            # Fake news examples
+            "Doctors don't want you to know this miracle cure...",
+            "Share this before they take it down! Government conspiracy exposed...",
+            "You won't believe what celebrities are doing to stay young...",
+            "This shocking revelation will change everything you know about...",
+            "Secret document reveals what the media isn't telling you..."
+        ]
+        sample_labels = [0, 0, 0, 0, 0, 1, 1, 1, 1, 1]  # 0=real, 1=fake
+        
+        X = vectorizer.fit_transform(sample_texts)
+        local_model.fit(X, sample_labels)
+        
+        logger.info("Fallback model created and trained successfully")
+        logger.info(f"Model type: {type(local_model)}")
+        logger.info(f"Vectorizer type: {type(vectorizer)}")
+        logger.info(f"Vocabulary size: {len(vectorizer.vocabulary_)}")
+        
+    except Exception as fallback_error:
+        logger.error(f"Failed to create fallback model: {str(fallback_error)}")
+        local_model = None
+        vectorizer = None
+
+# Web scraping utilities
+async def extract_article_content(url: str) -> Dict[str, Any]:
+    """Extract article content and metadata from URL"""
+    try:
+        # Headers to mimic a real browser request
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Cache-Control': 'max-age=0'
+        }
+        
+        async with httpx.AsyncClient(
+            timeout=15.0,
+            headers=headers,
+            follow_redirects=True,
+            verify=False  # Skip SSL verification for problematic sites
+        ) as client:
+            response = await client.get(str(url))
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Remove script and style elements
+            for script in soup(["script", "style", "nav", "header", "footer", "aside", "advertisement"]):
+                script.decompose()
+            
+            # Extract title
+            title = soup.find('title')
+            title = title.get_text().strip() if title else ""
+            
+            # Extract main content with multiple strategies
+            content = ""
+            
+            # Strategy 1: Look for common article content selectors
+            content_selectors = [
+                'article', 
+                '[role="main"]',
+                '.article-content', 
+                '.post-content', 
+                '.entry-content',
+                '.story-body',
+                '.article-body',
+                '.content-body',
+                '.post-body',
+                'main', 
+                '.content',
+                '.main-content',
+                '#content',
+                '#main-content'
+            ]
+            
+            for selector in content_selectors:
+                elements = soup.select(selector)
+                if elements:
+                    content = ' '.join([elem.get_text().strip() for elem in elements])
+                    if len(content) > 200:  # Only use if substantial content
+                        break
+            
+            # Strategy 2: Look for paragraphs if no main content found
+            if not content or len(content) < 100:
+                paragraphs = soup.find_all('p')
+                content = ' '.join([p.get_text().strip() for p in paragraphs if len(p.get_text().strip()) > 20])
+            
+            # Strategy 3: Extract from div elements as last resort
+            if not content or len(content) < 100:
+                divs = soup.find_all('div', class_=lambda x: x and any(word in x.lower() for word in ['content', 'article', 'story', 'post', 'body']))
+                content = ' '.join([div.get_text().strip() for div in divs])
+            
+            # Clean up the content
+            content = re.sub(r'\s+', ' ', content).strip()
+            
+            if not content:
+                raise ValueError("No content could be extracted from the page")
+            
+            # Extract metadata
+            metadata = {
+                'title': title,
+                'url': str(url),
+                'content_length': len(content),
+                'domain': urlparse(str(url)).netloc,
+                'extraction_method': 'web_scraping'
+            }
+            
+            # Try to extract author
+            author_selectors = [
+                'meta[name="author"]',
+                'meta[property="article:author"]',
+                '.author',
+                '.byline',
+                '[rel="author"]'
+            ]
+            
+            for selector in author_selectors:
+                author_elem = soup.select_one(selector)
+                if author_elem:
+                    if author_elem.name == 'meta':
+                        metadata['author'] = author_elem.get('content', '').strip()
+                    else:
+                        metadata['author'] = author_elem.get_text().strip()
+                    break
+                
+            # Try to extract publish date
+            date_selectors = [
+                'meta[property="article:published_time"]',
+                'meta[name="publish_date"]',
+                'meta[name="date"]',
+                '.publish-date',
+                '.date',
+                'time[datetime]'
+            ]
+            
+            for selector in date_selectors:
+                date_elem = soup.select_one(selector)
+                if date_elem:
+                    if date_elem.name == 'meta':
+                        metadata['published_date'] = date_elem.get('content', '').strip()
+                    elif date_elem.name == 'time':
+                        metadata['published_date'] = date_elem.get('datetime', date_elem.get_text()).strip()
+                    else:
+                        metadata['published_date'] = date_elem.get_text().strip()
+                    break
+            
+            return {'content': content, 'metadata': metadata}
+            
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 403:
+            # Try alternative approach for 403 errors
+            logger.warning(f"403 Forbidden for {url}, trying alternative method...")
+            try:
+                return await extract_with_fallback_method(url)
+            except:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Access denied to URL (403 Forbidden). The website may be blocking automated requests. Try providing the article text directly instead."
+                )
+        else:
+            raise HTTPException(status_code=400, detail=f"HTTP error {e.response.status_code}: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error extracting content from URL: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Could not extract content from URL: {str(e)}")
+
+async def extract_with_fallback_method(url: str) -> Dict[str, Any]:
+    """Fallback method for difficult websites"""
+    try:
+        # Use requests as fallback with session
+        import requests
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
+        
+        session = requests.Session()
+        
+        # Set up retry strategy
+        retry_strategy = Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[403, 429, 500, 502, 503, 504],
+        )
+        
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        
+        # Even more browser-like headers
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Referer': 'https://www.google.com/',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'cross-site',
+            'Cache-Control': 'max-age=0'
+        }
+        
+        response = session.get(str(url), headers=headers, timeout=10, verify=False)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # Extract content
+        for script in soup(["script", "style", "nav", "header", "footer", "aside"]):
+            script.decompose()
+            
+        paragraphs = soup.find_all('p')
+        content = ' '.join([p.get_text().strip() for p in paragraphs if len(p.get_text().strip()) > 20])
+        content = re.sub(r'\s+', ' ', content).strip()
+        
+        if not content:
+            raise ValueError("No content extracted")
+            
+        title = soup.find('title')
+        title = title.get_text().strip() if title else ""
+        
+        return {
+            'content': content,
+            'metadata': {
+                'title': title,
+                'url': str(url),
+                'content_length': len(content),
+                'domain': urlparse(str(url)).netloc,
+                'extraction_method': 'fallback_requests'
+            }
+        }
+        
+    except Exception as e:
+        raise Exception(f"Fallback extraction failed: {str(e)}")
+
+# AI model prediction functions
+async def predict_with_local_model(text: str) -> Dict[str, Any]:
+    """Improved prediction using local model"""
+    if not local_model or not vectorizer:
+        return None
+    
+    try:
+        # Enhanced text preprocessing
+        processed_text = preprocess_text(text)
+        if not processed_text:
+            return None
+        
+        # Look for common fake news indicators
+        fake_indicators = [
+            'miracle cure', 'share before', 'won\'t believe',
+            'doctors hate', 'secret remedy', 'conspiracy',
+            'shocking truth', 'they don\'t want you'
+        ]
+        
+        indicator_score = sum(1 for indicator in fake_indicators 
+                            if indicator in processed_text.lower())
+        
+        # Get model prediction
+        X = vectorizer.transform([processed_text])
+        prediction = local_model.predict(X)[0]
+        confidence = max(local_model.predict_proba(X)[0])
+        
+        # Adjust prediction based on indicators
+        if indicator_score >= 2:
+            confidence = max(confidence, 0.75)
+            prediction = 1
+        
+        return {
+            'prediction': int(prediction),
+            'confidence': float(confidence),
+            'model': 'local_trained'
+        }
+    except Exception as e:
+        logger.error(f"Local model prediction error: {str(e)}")
+        return None
+
+HUGGINGFACE_MODELS = [
+    {
+        "name": "roberta-fake-news",
+        "url": "https://api-inference.huggingface.co/models/hamzab/roberta-fake-news-classification",
+        "weight": 0.3
+    },
+    {
+        "name": "fake-news-bert",
+        "url": "https://api-inference.huggingface.co/models/arifhamed/fake-news-bert-base-uncased",
+        "weight": 0.25
+    },
+    {
+        "name": "fake-news-detector",
+        "url": "https://api-inference.huggingface.co/models/jy46604790/fake-news-detector-roberta",
+        "weight": 0.25
+    },
+    {
+        "name": "covid-twitter",
+        "url": "https://api-inference.huggingface.co/models/LiYuan/twitter-covid19-fake-news-detection",
+        "weight": 0.2
+    }
+]
+
+async def predict_with_huggingface(text: str) -> List[Dict[str, Any]]:
+    """Make predictions using multiple Hugging Face models"""
+    if not HUGGINGFACE_API_KEY:
+        return None
+    
+    predictions = []
+    headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
+    
+    async def query_model(model_info):
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    model_info["url"],
+                    headers=headers,
+                    json={"inputs": text[:512]}
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    if isinstance(result, list) and len(result) > 0:
+                        scores = result[0]
+                        fake_score = next((item['score'] for item in scores if 'fake' in item['label'].lower()), 0)
+                        real_score = next((item['score'] for item in scores if 'real' in item['label'].lower()), 0)
+                        
+                        return {
+                            'prediction': 1 if fake_score > real_score else 0,
+                            'confidence': max(fake_score, real_score),
+                            'model': f"huggingface_{model_info['name']}",
+                            'weight': model_info['weight']
+                        }
+            return None
+        except Exception as e:
+            logger.error(f"Error with {model_info['name']}: {str(e)}")
+            return None
+    
+    # Query all models concurrently
+    tasks = [query_model(model) for model in HUGGINGFACE_MODELS]
+    results = await asyncio.gather(*tasks)
+    
+    # Filter out failed predictions
+    predictions = [pred for pred in results if pred is not None]
+    
+    return predictions if predictions else None
+
+async def generate_explanation_with_gemini(text: str, verdict: str, confidence: float) -> str:
+    """Generate concise fact-checking analysis using Google Gemini"""
+    if not GEMINI_API_KEY:
+        return f"Content appears to be {verdict.lower()} based on our analysis."
+    
+    try:
+        model = genai.GenerativeModel('gemini-pro')
+        
+        prompt = f"""
+        As a fact-checker, analyze this content briefly. The ML model classified it as {verdict}.
+        
+        Content: "{text[:800]}..."
+
+        Provide a very concise analysis (2-3 sentences) focusing on:
+        - Key indicators of reliability/unreliability
+        - Main points that support the classification
+        - Brief guidance for readers
+
+        Keep the response short and avoid mentioning confidence scores or percentages.
+        """
+        
+        response = await asyncio.to_thread(
+            model.generate_content,
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.3,
+                top_p=0.8,
+                top_k=40,
+                max_output_tokens=200
+            )
+        )
+        
+        return response.text.strip()
+        
+    except Exception as e:
+        logger.error(f"Gemini API error: {str(e)}")
+        return f"Content shows characteristics typical of {verdict.lower()} news articles."
+
+# Main prediction logic
+async def analyze_news_content(text: str) -> PredictionResponse:
+    """Enhanced news analysis with multiple models"""
+    start_time = datetime.now()
+    
+    # Improved validation
+    cleaned_text = text.strip()
+    word_count = len(cleaned_text.split())
+    
+    if word_count < 10:
+        text = f"{text}\n\nNote: This is a short statement requiring additional context and verification."
+    
+    predictions = []
+    model_sources = []
+    
+    # Get local model prediction
+    local_result = await predict_with_local_model(text)
+    if local_result:
+        local_result['weight'] = 0.4  # Weight for local model
+        predictions.append(local_result)
+        model_sources.append(local_result['model'])
+    
+    # Get Hugging Face predictions
+    hf_results = await predict_with_huggingface(text)
+    if hf_results:
+        predictions.extend(hf_results)
+        model_sources.extend([pred['model'] for pred in hf_results])
+    
+    if not predictions:
+        raise HTTPException(status_code=503, detail="No models available for prediction")
+    
+    # Calculate weighted ensemble prediction
+    total_weight = sum(pred['weight'] for pred in predictions)
+    final_prediction = sum(pred['prediction'] * (pred['weight'] / total_weight) 
+                         for pred in predictions)
+    final_confidence = sum(pred['confidence'] * (pred['weight'] / total_weight) 
+                         for pred in predictions)
+    
+    # More conservative threshold for fake news classification
+    verdict = "FAKE" if final_prediction > 0.55 else "REAL"
+    
+    # Get Gemini analysis
+    explanation = await generate_explanation_with_gemini(text, verdict, final_confidence)
+    
+    processing_time = (datetime.now() - start_time).total_seconds()
+    return PredictionResponse(
+        verdict=verdict,
+        explanation=explanation,
+        timestamp=datetime.now(),
+        processing_time=processing_time,
+        model_sources=model_sources
+    )
+
+# API Endpoints
+@app.on_event("startup")
+async def startup_event():
+    """Initialize models and services on startup"""
+    logger.info("Starting TruthGuard API...")
+    await load_local_model()
+    logger.info("TruthGuard API ready!")
+
+@app.get("/", response_model=Dict[str, str])
+async def root():
+    """Root endpoint with API information"""
+    return {
+        "message": "TruthGuard API - AI-powered fake news detection",
+        "version": "1.0.0",
+        "docs": "/docs"
+    }
+
+@app.get("/health", response_model=HealthResponse)
+async def health_check():
+    """Health check endpoint"""
+    return HealthResponse(
+        status="healthy",
+        models_loaded={
+            "local_model": local_model is not None,
+            "vectorizer": vectorizer is not None
+        },
+        api_status={
+            "huggingface": "configured" if HUGGINGFACE_API_KEY else "not_configured",
+            "gemini": "configured" if GEMINI_API_KEY else "not_configured"
+        }
+    )
+
+@app.post("/analyze", response_model=PredictionResponse)
+async def analyze_news(request: NewsRequest):
+    """Main endpoint to analyze news content"""
+    try:
+        text_content = ""
+        metadata = None
+        
+        if request.url:
+            # Extract content from URL
+            extracted = await extract_article_content(request.url)
+            text_content = extracted['content']
+            metadata = extracted['metadata']
+        elif request.text:
+            text_content = request.text
+        else:
+            raise HTTPException(status_code=400, detail="Either text or url must be provided")
+        
+        if not text_content.strip():
+            raise HTTPException(status_code=400, detail="No content found to analyze")
+        
+        # Analyze the content
+        result = await analyze_news_content(text_content)
+        
+        # Add metadata if available
+        if metadata:
+            result.article_metadata = metadata
+        
+        return result
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Unexpected error in verify_news endpoint: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        logger.error(f"Error in analyze_news: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error during analysis")
 
-@app.on_event("startup")
-async def startup_event():
-    logger.info("🚀 TruthGuard Server Starting Up...")
-    logger.info(f"🤖 Local Model Status: {'✅ Loaded' if model else '❌ Not Loaded'}")
-    logger.info(f"🔧 Vectorizer Status: {'✅ Loaded' if vectorizer else '❌ Not Loaded'}")
-    logger.info(f"🌐 HuggingFace Client: {'✅ Ready' if hf_client else '❌ Not Available'}")
+@app.post("/analyze/batch")
+async def analyze_batch(requests: List[NewsRequest]):
+    """Batch analysis endpoint"""
+    if len(requests) > 10:
+        raise HTTPException(status_code=400, detail="Maximum 10 requests per batch")
     
-    if model and vectorizer:
-        logger.info("✅ Server ready for news analysis!")
-    else:
-        logger.warning("⚠️ Server started but ML models not loaded - check your .pkl files")
+    results = []
+    for req in requests:
+        try:
+            result = await analyze_news(req)
+            results.append(result)
+        except Exception as e:
+            results.append({
+                "error": str(e),
+                "timestamp": datetime.now()
+            })
+    
+    return {"results": results}
 
-def start_server():
-    """Start the server"""
-    print("=" * 60)
-    print("🚀 TruthGuard - Fake News Detection API")
-    print("🤖 Using your trained models + HuggingFace APIs")
-    print("🌐 Server URL: http://127.0.0.1:8000")
-    print("📚 API Docs: http://127.0.0.1:8000/docs")
-    print("🔍 Debug Info: http://127.0.0.1:8000/debug")
-    print("=" * 60)
-    
-    uvicorn.run(
-        app,
-        host="127.0.0.1",
-        port=8000,
-        reload=False,
-        log_level="info"
-    )
+@app.get("/models/info")
+async def model_info():
+    """Get information about loaded models"""
+    return {
+        "local_model": {
+            "loaded": local_model is not None,
+            "type": type(local_model).__name__ if local_model else None
+        },
+        "vectorizer": {
+            "loaded": vectorizer is not None,
+            "type": type(vectorizer).__name__ if vectorizer else None
+        },
+        "external_apis": {
+            "huggingface": bool(HUGGINGFACE_API_KEY),
+            "gemini": bool(GEMINI_API_KEY)
+        }
+    }
 
 if __name__ == "__main__":
-    start_server()
+    import uvicorn
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info"
+    )
