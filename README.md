@@ -101,13 +101,7 @@ uvicorn main:app --reload
 4. Push to the branch
 5. Create a Pull Request
 
-## License
+## Developer
 
-[Your chosen license]
-
-## Acknowledgments
-
-- HuggingFace for providing AI models
-- Google Gemini for advanced text analysis
-- FastAPI for the backend framework
+Edwin Maina @EdwinMaina7
 
